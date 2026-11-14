@@ -106,6 +106,7 @@ def extract_default(soup: BeautifulSoup, base_url: str, full: bool = False) -> d
         "json_ld": json_ld,
         **extract_media(soup, base_url),
         **extract_contacts(soup),
+        "assets": extract_assets(soup, base_url),
     }
     if full:
         data["full_text"] = all_text(soup)
@@ -151,6 +152,22 @@ def extract_media(soup: BeautifulSoup, base_url: str) -> dict:
         return out
 
     return {"background_images": uniq(bgs), "videos": uniq(videos), "embeds": uniq(embeds)}
+
+
+def extract_assets(soup: BeautifulSoup, base_url: str) -> dict:
+    """Files the page needs to render: stylesheets, scripts, icons/manifest/preloads."""
+    css, js, other = [], [], []
+    for link in soup.find_all("link", href=True):
+        rel = " ".join(link.get("rel", [])).lower()
+        url = urljoin(base_url, link["href"].strip())
+        if "stylesheet" in rel or (rel == "preload" and link.get("as") == "style"):
+            css.append(url)
+        elif any(k in rel for k in ("icon", "manifest", "preload", "mask-icon")):
+            other.append(url)
+    for sc in soup.find_all("script", src=True):
+        js.append(urljoin(base_url, sc["src"].strip()))
+    dedupe = lambda xs: list(dict.fromkeys(x for x in xs if x.startswith(("http://", "https://"))))
+    return {"stylesheets": dedupe(css), "scripts": dedupe(js), "other": dedupe(other)}
 
 
 def extract_contacts(soup: BeautifulSoup) -> dict:

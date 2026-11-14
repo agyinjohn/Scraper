@@ -46,8 +46,16 @@ Every page record always includes `background_images` (CSS/`data-background`),
 * `--full` adds `full_text` (every visible line, including header, menus,
   footer and popups; `text` stays the main content only) and `forms` (each form's
   action, method and fields with names, labels, placeholders and options).
-* `--download DIR` saves every page's HTML plus all of its images, background
-  images and video files into `DIR/<host>/<path>`, mirroring the site layout.
+* `--download DIR` mirrors the site into `DIR/<host>/<path>` so it can be
+  browsed offline: every page's HTML plus its images, background images, video
+  files, stylesheets, scripts, icons and fonts. Stylesheets are scanned for
+  `url()` and `@import` (so web fonts, including Google Fonts, and CSS
+  background images come along), URLs that differ only by query string get
+  distinct file names, and links in saved pages/stylesheets are rewritten to the
+  local copies. Pages are restricted to the crawl's domain; CSS/JS/fonts are
+  fetched from any host (CDNs) because pages can't render without them.
+
+Open `DIR/<host>/.../index.html` in a browser to view the copy.
 
 ```bash
 scraper https://example.com -d 10 -n 500 --full --download mirror/ -o site.json
@@ -125,7 +133,7 @@ scraper https://ex-coders.com/html/ecomas/index.html -d 1 --include 'product-det
 | `-H 'Name: value'`, `--cookie k=v` | extra headers / cookies (e.g. for logged-in pages) |
 | `--proxy URL`, `--user-agent UA`, `--timeout`, `--retries`, `--insecure` | network tuning |
 | `-p/--products`, `--products-file FILE` | auto-detect products per page / write a site-wide catalog |
-| `--full`, `--download DIR` | capture all text and forms / save pages and media |
+| `--full`, `--download DIR` | capture all text and forms / save an offline copy (pages, images, CSS, JS, fonts) |
 | `-f json\|jsonl\|csv`, `-o FILE` | output format and destination (default JSON to stdout) |
 | `-i FILE` | read URLs from a file, one per line |
 | `-v` / `-vv` | progress / debug logging |

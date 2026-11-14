@@ -30,6 +30,19 @@ PAGES = {
     "p2.html": "<html><head><title>P2</title></head><body></body></html>",
     "private/secret.html": "<html><head><title>Secret</title></head></html>",
     "robots.txt": "User-agent: *\nDisallow: /private/\n",
+    "styled.html": '<html><head><link rel="stylesheet" href="assets/css/main.css">'
+                   '<link rel="icon" href="assets/fav.ico"><script src="assets/js/app.js"></script>'
+                   '</head><body><img src="assets/img/a.png"></body></html>',
+    "assets/css/main.css": '@import "extra.css"; @import url("more.css?v=2"); '
+                           '@font-face{src:url(../fonts/f.woff2?v=6.1) format("woff2")}',
+    "assets/css/more.css": '.y{background:url(../img/more.png)}',
+    "assets/img/more.png": "png",
+    "assets/css/extra.css": '.hero{background:url("../img/bg.png")} .x{background:url(data:image/png;base64,AA)}',
+    "assets/fonts/f.woff2": "font",
+    "assets/img/bg.png": "png",
+    "assets/img/a.png": "png",
+    "assets/js/app.js": "console.log(1)",
+    "assets/fav.ico": "ico",
 }
 
 
@@ -196,3 +209,47 @@ def test_download(site, tmp_path):
 def test_phone_noise_rejected():
     html = "<p>+670 413 90 762</p><p>7398 Main St</p><p>(22) (15) (03)</p><p>Order 2024-2025</p><p>Call (020) 555-0199</p>"
     assert extract(html, "https://x.test/")["phones"] == ["+670 413 90 762", "(020) 555-0199"]
+
+
+def test_download_mirrors_css_js_fonts(site, tmp_path):
+    out = tmp_path / "mirror"
+    assert main([site + "/styled.html", "--download", str(out), "--delay", "0", "-o", str(tmp_path / "o.json")]) == 0
+    root = next(out.iterdir())
+    for rel in ["styled.html", "assets/css/main.css", "assets/css/extra.css",
+                "assets/img/bg.png", "assets/img/a.png", "assets/js/app.js", "assets/fav.ico",
+                "assets/img/more.png"]:
+        assert (root / rel).is_file(), rel
+    # query-string URLs get distinct names and references are rewritten to them
+    main_css = (root / "assets/css/main.css").read_text()
+    font = next((root / "assets/fonts").glob("f_*.woff2"))
+    more = next((root / "assets/css").glob("more_*.css"))
+    assert f'url("../fonts/{font.name}")' in main_css and f'@import url("{more.name}")' in main_css
+    rec = json.loads((tmp_path / "o.json").read_text())[0]
+    assert rec["assets"]["scripts"] == [site + "/assets/js/app.js"]
+
+
+def test_absolute_links_rewritten(tmp_path):
+    from scraper.downloader import Downloader
+    d = Downloader(Fetcher(), str(tmp_path))
+    d.files["https://cdn.test/lib/x.css"] = str(tmp_path / "cdn.test/lib/x.css")
+    page = d.save_page("https://shop.test/a/b.html",
+                       '<link rel="stylesheet" href="https://cdn.test/lib/x.css"><a href="c.html">c</a>')
+    html = open(page).read()
+    assert 'href="../../cdn.test/lib/x.css"' in html and 'href="c.html"' in html
+
+
+def test_local_path_query_and_extension(tmp_path):
+    from scraper.downloader import local_path
+    a = local_path("m", "https://fonts.googleapis.com/css2?family=Jost", "file", "text/css; charset=utf-8")
+    b = local_path("m", "https://fonts.googleapis.com/css2?family=Charm", "file", "text/css")
+    assert a != b and a.endswith(".css") and a.startswith("m/fonts.googleapis.com/css2_")
+    assert local_path("m", "https://x.test/a/") == "m/x.test/a/index.html"
+
+
+def test_css_ref_parsing():
+    from scraper.downloader import CSS_URL_RE, _css_ref
+    css = ('@import url("https://fonts.googleapis.com/css2?family=Jost:wght@0,100;1,900&display=swap");'
+           "@import 'a.css'; @import url(b.css); .x{background:url( 'i.png' )} .y{src:url(f.woff2?v=1)}")
+    assert [_css_ref(m) for m in CSS_URL_RE.finditer(css)] == [
+        ("https://fonts.googleapis.com/css2?family=Jost:wght@0,100;1,900&display=swap", True),
+        ("a.css", True), ("b.css", True), ("i.png", False), ("f.woff2?v=1", False)]

@@ -55,7 +55,8 @@ def build_parser() -> argparse.ArgumentParser:
     ex.add_argument("--full", action="store_true",
                     help="capture everything: all text (header/menus/footer/popups) and form fields")
     ex.add_argument("--download", metavar="DIR",
-                    help="save each page's HTML and all its images/background images/video files into DIR")
+                    help="mirror pages into DIR with everything needed to view them offline: "
+                         "images, CSS, JS, fonts and files referenced from CSS")
     ex.add_argument("--no-default", action="store_true",
                     help="only output custom fields, skip generic page extraction")
 
@@ -156,8 +157,8 @@ def main(argv: list[str] | None = None) -> int:
             downloader = Downloader(fetcher, args.download, hosts)
 
             def on_page(url, html, record):
+                downloader.download_page_resources(record)
                 record["saved_as"] = downloader.save_page(url, html)
-                downloader.download(downloader.media_urls(record))
 
         crawler = Crawler(fetcher, config, on_page=on_page)
         catalog: dict[tuple, dict] = {}
@@ -184,7 +185,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.output:
         print(f"wrote {n} record(s) to {args.output}", file=sys.stderr)
     if downloader is not None:
-        print(f"saved pages and {downloader.saved} media file(s) to {args.download}; "
+        kinds = ", ".join(f"{v} {k}" for k, v in sorted(downloader.by_kind.items()))
+        print(f"saved pages and {downloader.saved} file(s) ({kinds}) to {args.download}; "
               f"{len(downloader.failed)} failed", file=sys.stderr)
         for f in downloader.failed[:20]:
             print(f"  failed: {f}", file=sys.stderr)
