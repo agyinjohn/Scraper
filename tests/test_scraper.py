@@ -1,0 +1,129 @@
+import json
+import threading
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from functools import partial
+
+import pytest
+
+from scraper.cli import main
+from scraper.crawler import CrawlConfig, Crawler
+from scraper.extractor import apply_rule, extract, make_soup, parse_rules
+from scraper.fetcher import Fetcher
+
+PAGES = {
+    "index.html": """<html lang="en"><head><title>Home  Page</title>
+<meta name="description" content="A test site">
+<script type="application/ld+json">{"@type": "WebSite", "name": "Test"}</script></head>
+<body><nav><a href="/about.html">About</a></nav>
+<main><h1>Welcome</h1><p>Hello <b>world</b>.</p>
+<ul class="products">
+  <li class="product"><a href="/p1.html">Widget</a><span class="price">$5</span><span class="tag">a</span><span class="tag">b</span></li>
+  <li class="product"><a href="/p2.html">Gadget</a><span class="price">$9</span></li>
+</ul>
+<table><tr><th>k</th><th>v</th></tr><tr><td>x</td><td>1</td></tr></table>
+<img src="/logo.png" alt="logo">
+<a href="https://other.example.com/">external</a>
+<a href="/private/secret.html">secret</a>
+</main></body></html>""",
+    "about.html": "<html><head><title>About</title></head><body><a href='/index.html'>home</a></body></html>",
+    "p1.html": "<html><head><title>P1</title></head><body><a href='/p2.html'>next</a></body></html>",
+    "p2.html": "<html><head><title>P2</title></head><body></body></html>",
+    "private/secret.html": "<html><head><title>Secret</title></head></html>",
+    "robots.txt": "User-agent: *\nDisallow: /private/\n",
+}
+
+
+@pytest.fixture(scope="module")
+def site(tmp_path_factory):
+    root = tmp_path_factory.mktemp("site")
+    for name, body in PAGES.items():
+        (root / name).parent.mkdir(parents=True, exist_ok=True)
+        (root / name).write_text(body)
+
+    class Quiet(SimpleHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), partial(Quiet, directory=str(root)))
+    t = threading.Thread(target=server.serve_forever, daemon=True)
+    t.start()
+    yield f"http://127.0.0.1:{server.server_address[1]}"
+    server.shutdown()
+
+
+def test_default_extraction():
+    data = extract(PAGES["index.html"], "https://x.test/")
+    assert data["title"] == "Home Page"
+    assert data["description"] == "A test site"
+    assert data["language"] == "en"
+    assert {"level": 1, "text": "Welcome"} in data["headings"]
+    assert "Hello world ." in data["text"] or "Hello\nworld" in data["text"]
+    assert "About" not in data["text"]  # nav stripped
+    assert data["images"][0]["src"] == "https://x.test/logo.png"
+    assert data["tables"] == [[["k", "v"], ["x", "1"]]]
+    assert data["json_ld"][0]["name"] == "Test"
+    assert any(l["url"] == "https://x.test/about.html" for l in data["links"])
+
+
+def test_cli_rules():
+    rules = parse_rules(["title=h1", "+prices=.price", "first=.product a@href"])
+    out = extract(PAGES["index.html"], "https://x.test/", rules, include_default=False)
+    assert out == {"data": {"title": "Welcome", "prices": ["$5", "$9"],
+                            "first": "https://x.test/p1.html"}}
+
+
+def test_nested_rules():
+    rule = {"selector": ".product", "all": True, "fields": {
+        "name": "a", "url": "a@href", "price": ".price",
+        "tags": {"selector": ".tag", "all": True}}}
+    res = apply_rule(make_soup(PAGES["index.html"]), rule, "https://x.test/")
+    assert res == [
+        {"name": "Widget", "url": "https://x.test/p1.html", "price": "$5", "tags": ["a", "b"]},
+        {"name": "Gadget", "url": "https://x.test/p2.html", "price": "$9", "tags": []},
+    ]
+
+
+def test_missing_selector_is_none():
+    assert apply_rule(make_soup("<p>x</p>"), ".nope", "https://x.test/") is None
+
+
+def test_crawl_respects_scope_and_robots(site):
+    cfg = CrawlConfig(max_pages=20, max_depth=2, delay=0)
+    with Fetcher(retries=0) as f:
+        records = list(Crawler(f, cfg).crawl([site + "/index.html"]))
+    titles = {r.get("title") for r in records}
+    assert {"Home Page", "About", "P1", "P2"} <= titles
+    assert "Secret" not in titles
+    assert any(r.get("error") == "disallowed by robots.txt" for r in records)
+    assert not any("other.example.com" in r["url"] for r in records)
+    urls = [r["url"] for r in records]
+    assert len(urls) == len(set(urls))
+
+
+def test_max_pages(site):
+    cfg = CrawlConfig(max_pages=2, max_depth=5, delay=0)
+    with Fetcher(retries=0) as f:
+        records = [r for r in Crawler(f, cfg).crawl([site + "/index.html"]) if "error" not in r]
+    assert len(records) == 2
+
+
+def test_404(site):
+    with Fetcher(retries=0) as f:
+        (rec,) = Crawler(f, CrawlConfig(delay=0)).crawl([site + "/missing.html"])
+    assert rec["status"] == 404 and rec["error"] == "HTTP 404"
+
+
+def test_cli_end_to_end(site, tmp_path, capsys):
+    out = tmp_path / "out.json"
+    rc = main([site + "/index.html", "-s", "+names=.product a", "--no-default",
+               "--delay", "0", "-o", str(out)])
+    assert rc == 0
+    data = json.loads(out.read_text())
+    assert data[0]["data"]["names"] == ["Widget", "Gadget"]
+
+
+def test_cli_csv(site, tmp_path):
+    out = tmp_path / "out.csv"
+    assert main([site + "/index.html", "-s", "h=h1", "-f", "csv", "-o", str(out), "--delay", "0"]) == 0
+    text = out.read_text()
+    assert "data.h" in text.splitlines()[0] and "Welcome" in text

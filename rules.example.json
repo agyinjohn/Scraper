@@ -1,0 +1,15 @@
+{
+  "page_title": "h1",
+  "products": {
+    "selector": ".product",
+    "all": true,
+    "fields": {
+      "name": "h2",
+      "price": ".price",
+      "url": "a@href",
+      "image": "img@src",
+      "tags": { "selector": ".tag", "all": true }
+    }
+  },
+  "next_page": "a.next@href"
+}
