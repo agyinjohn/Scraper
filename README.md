@@ -62,9 +62,23 @@ For nested records, use a JSON config (see `rules.example.json`):
 Add `"regex"` to a rule to keep only part of the value, e.g.
 `{"selector": ".price", "regex": "\\$[\\d.,]+"}` (a capture group, if present, is returned).
 
-Custom fields appear under the `data` key of each record. `examples/ecomas.json`
-is a real-world example that pulls product cards (name, price, sale price,
-image, URL) from an e-commerce template page.
+Other rule options: `"count": true` returns how many elements match (e.g. star
+icons → rating), and the attribute `own` (`"h5@own"`) returns only an element's
+direct text, ignoring nested tags.
+
+Custom fields appear under the `data` key of each record.
+
+Real-world examples for an e-commerce template:
+
+```bash
+# product cards from a listing page (name, price, sale price, image, URL)
+scraper https://ex-coders.com/html/ecomas/index.html -c examples/ecomas.json --no-default
+# full product page: price, rating, SKU, tags, gallery, specs, reviews
+scraper https://ex-coders.com/html/ecomas/product-details.html -c examples/ecomas-details.json --no-default
+# start at the listing and follow links to product pages only
+scraper https://ex-coders.com/html/ecomas/index.html -d 1 --include 'product-details' \
+  -c examples/ecomas-details.json --no-default -f jsonl -o products.jsonl
+```
 
 ## Options
 

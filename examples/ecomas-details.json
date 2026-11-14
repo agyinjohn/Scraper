@@ -1,0 +1,37 @@
+{
+  "name": ".product-details-content > h3",
+  "price": { "selector": ".product-details-content .price-list", "regex": "\\$[\\d,.]+" },
+  "rating": { "selector": ".product-details-content > .star i.fa-star", "count": true },
+  "review_count": { "selector": ".product-details-content > .star span", "regex": "(\\d+)" },
+  "summary": ".product-details-content > p",
+  "sku": { "selector": ".details-info", "regex": "SKU:\\s*(.+)" },
+  "category": { "selector": ".details-info:nth-of-type(2) a" },
+  "tags": { "selector": ".details-info.style-2 b", "all": true },
+  "images": { "selector": ".shop-details-image .tab-pane img@src", "all": true },
+  "thumbnails": { "selector": ".shop-details-image .nav img@src", "all": true },
+  "description": { "selector": "#description .description-content > p", "all": true },
+  "attributes": {
+    "selector": "#description .description-list:first-child li",
+    "all": true,
+    "fields": {
+      "label": { "selector": "", "attr": "own", "regex": "^(.*?):" },
+      "value": "span"
+    }
+  },
+  "specifications": {
+    "selector": "#additional tr",
+    "all": true,
+    "fields": { "label": "td:nth-of-type(1)", "value": "td:nth-of-type(2)" }
+  },
+  "reviews": {
+    "selector": "#review .admin-items",
+    "all": true,
+    "fields": {
+      "author": "h5@own",
+      "date": "h5 span",
+      "rating": { "selector": ".star i.fa-star", "count": true },
+      "text": ".content > p",
+      "avatar": ".admin-img img@src"
+    }
+  }
+}

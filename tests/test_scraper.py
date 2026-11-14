@@ -134,3 +134,10 @@ def test_regex_rule():
     assert apply_rule(soup, {"selector": "li", "regex": r"\$[\d.]+"}, "") == "$19.00"
     assert apply_rule(soup, {"selector": "b", "regex": r"SKU: (\d+)"}, "") == "42"
     assert apply_rule(soup, {"selector": "b", "regex": r"zzz"}, "") is None
+
+
+def test_count_and_own_text():
+    soup = make_soup('<div class="star"><i></i><i></i><i></i></div><h5>Ann <span>June 1</span></h5>')
+    assert apply_rule(soup, {"selector": ".star i", "count": True}, "") == 3
+    assert apply_rule(soup, "h5@own", "") == "Ann"
+    assert apply_rule(soup, "h5 span", "") == "June 1"

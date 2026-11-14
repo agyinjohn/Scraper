@@ -23,6 +23,8 @@ URL_ATTRS = {"href", "src", "action", "data-src", "poster"}
 # A rule is either a selector string ("css", "css@attr") or a dict:
 #   {"selector": "...", "attr": "...", "all": bool, "regex": "...", "fields": {name: rule}}
 # "regex" keeps only the first match (or its first capture group) of the value.
+# "count": true returns the number of matching elements instead of their values.
+# attr "own" returns only an element's direct text (excluding child elements).
 Rule = Union[str, dict]
 
 
@@ -160,6 +162,8 @@ def _value(el: Tag, attr: Optional[str], base_url: str) -> Optional[str]:
         return _clean(el.get_text())
     if attr == "html":
         return el.decode_contents()
+    if attr == "own":  # only the element's direct text, not its children's
+        return _clean(" ".join(el.find_all(string=True, recursive=False)))
     val = el.get(attr)
     if isinstance(val, list):
         val = " ".join(val)
@@ -173,6 +177,9 @@ def apply_rule(scope: Union[BeautifulSoup, Tag], rule: Rule, base_url: str) -> A
     selector = r.get("selector") or ""
     fields = r.get("fields")
     many = r.get("all", False)
+
+    if r.get("count"):
+        return len(scope.select(selector)) if selector else 1
 
     if selector:
         elements = scope.select(selector) if many else [scope.select_one(selector)]
