@@ -141,3 +141,26 @@ def test_count_and_own_text():
     assert apply_rule(soup, {"selector": ".star i", "count": True}, "") == 3
     assert apply_rule(soup, "h5@own", "") == "Ann"
     assert apply_rule(soup, "h5 span", "") == "June 1"
+
+
+SHOP = """<html><body>
+<header><div class="menu-cart"><div class="cart-product"><img src="/c.jpg"><a href="/x">Cart thing</a><span>$1.00</span></div></div></header>
+<div class="feature"><img src="/icons/truck.svg"><h5>Free shipping</h5><p>Orders over $140.00</p></div>
+<div class="grid">
+  <div class="card"><div class="badge"><h6>Hot</h6></div><img src="/a.jpg">
+    <span>Speaker</span><h5><a href="/p/a">Mini Speaker</a></h5>
+    <div class="star"><i class="fas fa-star"></i><i class="fas fa-star"></i><i class="far fa-star"></i></div>
+    <h6><del>$120.00</del> $97.00</h6></div>
+  <div class="card"><img src="/b.jpg"><a href="/p/b">Desk Lamp</a><span class="price">€45</span></div>
+</div></body></html>"""
+
+
+def test_auto_product_detection():
+    from scraper.extractor import extract_products
+    ps = extract_products(make_soup(SHOP), "https://shop.test/")
+    assert ps == [
+        {"name": "Mini Speaker", "price": "$97.00", "old_price": "$120.00",
+         "url": "https://shop.test/p/a", "image": "https://shop.test/a.jpg", "rating": 2.0},
+        {"name": "Desk Lamp", "price": "€45", "old_price": None,
+         "url": "https://shop.test/p/b", "image": "https://shop.test/b.jpg", "rating": None},
+    ]

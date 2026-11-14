@@ -209,11 +209,14 @@ def extract(
     base_url: str,
     rules: Optional[dict[str, Rule]] = None,
     include_default: bool = True,
+    products: bool = False,
 ) -> dict:
     soup = make_soup(html)
     data: dict[str, Any] = {}
     if include_default:
         data.update(extract_default(soup, base_url))
+    if products:
+        data["products"] = extract_products(soup, base_url)
     if rules:
         data["data"] = {name: apply_rule(soup, rule, base_url) for name, rule in rules.items()}
     return data
@@ -227,3 +230,134 @@ def find_links(html: str, base_url: str) -> list[str]:
         if href.startswith(("http://", "https://")):
             out.append(href)
     return out
+
+
+# ----------------------------------------------------------------- products
+PRICE_RE = re.compile(
+    r"(?:[$€£¥₹₦₵]|US\$|GH₵|R\$)\s?\d[\d,]*(?:\.\d+)?|\d[\d,]*(?:\.\d+)?\s?(?:USD|EUR|GBP|GHS|NGN)\b"
+)
+_HEADINGS = ["h1", "h2", "h3", "h4", "h5", "h6"]
+
+
+def _is_price(text: str) -> bool:
+    m = PRICE_RE.search(text)
+    return bool(m) and len(text) <= len(m.group(0)) + 25
+
+
+_GENERIC_ALT = {"", "img", "image", "product", "photo", "picture", "thumb", "thumbnail"}
+_CHROME = ["header", "nav", "footer"]
+
+
+_BADGE_RE = re.compile(r"^(?:-?\d+\s?%(?:\s?off)?|hot|new|sale|trending|featured|sold out|best ?seller)$", re.I)
+
+
+def _in_badge(el: Tag, card: Tag) -> bool:
+    for anc in el.parents:
+        if anc is card:
+            return False
+        if any(re.search(r"badge|label|tag|ribbon|sale|discount", c) for c in anc.get("class", [])):
+            return True
+    return False
+
+
+def _photo(card: Tag) -> Optional[Tag]:
+    """First image that looks like a photo rather than an icon."""
+    for img in card.find_all("img"):
+        src = (img.get("src") or img.get("data-src") or "").lower()
+        if src and not src.split("?")[0].endswith(".svg") and not re.search(r"icon|rating|star|logo", src.rsplit("/", 1)[-1]):
+            return img
+    return None
+
+
+def _rating(card: Tag) -> Optional[float]:
+    stars = [i for i in card.find_all("i") if any("star" in c for c in i.get("class", []))]
+    if not stars:
+        return None
+    score = 0.0
+    for i in stars:
+        cls = i.get("class", [])
+        if any(c in ("far", "fa-regular", "fa-star-o") for c in cls):
+            continue
+        score += 0.5 if any("half" in c for c in cls) else 1
+    return score
+
+
+def extract_products(soup: BeautifulSoup, base_url: str) -> list[dict]:
+    """Heuristically find product cards: the smallest element around a price
+    that also holds a photo and a name. Works across most shop layouts
+    without any selectors. Header/nav/footer widgets (mini-carts) are skipped."""
+    soup = make_soup(str(soup))
+    for tag in soup(["script", "style", "noscript", "template"]):
+        tag.decompose()
+
+    cards: list[Tag] = []
+    seen_ids: set[int] = set()
+    for node in soup.find_all(string=PRICE_RE):
+        if node.find_parent(["del", "s", "strike", "option", "select"] + _CHROME):
+            continue
+        if not _is_price(_clean(node.parent.get_text())):
+            continue
+        card = None
+        for anc in list(node.parents)[:8]:
+            if not isinstance(anc, Tag) or anc.name in ("body", "html", "[document]"):
+                break
+            if _photo(anc) is not None:
+                card = anc
+                break
+        if card is None:
+            continue
+        prices = {PRICE_RE.search(s).group(0) for s in card.find_all(string=PRICE_RE)
+                  if not s.find_parent(["del", "s", "strike"])}
+        if len(prices) > 2:  # grabbed a whole grid, not one card
+            continue
+        if id(card) not in seen_ids:
+            seen_ids.add(id(card))
+            cards.append(card)
+
+    products = []
+    for card in cards:
+        name, name_link = None, None
+        best = -1
+        for h in card.find_all(_HEADINGS):
+            t = _clean(h.get_text())
+            if not t or _is_price(t) or _BADGE_RE.match(t) or _in_badge(h, card):
+                continue
+            score = (2 if h.find("a", href=True) else 0) + (1 if len(t) > 3 else 0)
+            if score > best:
+                best, name, name_link = score, t, h.find("a", href=True)
+        if not name:
+            for a in card.find_all("a", href=True):
+                t = _clean(a.get_text())
+                if len(t) > 2 and not _is_price(t):
+                    name, name_link = t, a
+                    break
+        img = _photo(card)
+        if not name:
+            for txt in card.find_all(string=True):
+                t = _clean(txt)
+                if len(t) > 2 and not PRICE_RE.search(t) and txt.parent.name not in ("button", "label"):
+                    name = t
+                    break
+        if not name and img is not None and (img.get("alt") or "").lower() not in _GENERIC_ALT:
+            name = img["alt"]
+        if not name:
+            continue
+
+        price = next(PRICE_RE.search(s).group(0) for s in card.find_all(string=PRICE_RE)
+                     if not s.find_parent(["del", "s", "strike"]))
+        old = card.find(["del", "s", "strike"], string=PRICE_RE)
+        old_price = PRICE_RE.search(old.get_text()).group(0) if old else None
+        link = name_link if name_link is not None and not name_link["href"].startswith("#") else next(
+            (a for a in card.find_all("a", href=True)
+             if a["href"].strip() and not a["href"].startswith(("#", "javascript:"))), None)
+        src = img.get("src") or img.get("data-src") if img is not None else None
+
+        products.append({
+            "name": name,
+            "price": price,
+            "old_price": old_price if old_price != price else None,
+            "url": urljoin(base_url, link["href"]) if link is not None else None,
+            "image": urljoin(base_url, src) if src else None,
+            "rating": _rating(card),
+        })
+    return products

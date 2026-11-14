@@ -46,6 +46,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="custom field; prefix NAME with + to get all matches (repeatable)",
     )
     ex.add_argument("-c", "--config", help="JSON file of extraction rules (supports nesting)")
+    ex.add_argument("-p", "--products", action="store_true",
+                    help="auto-detect product cards (name, price, image, link, rating) on each page")
+    ex.add_argument("--products-file", metavar="FILE",
+                    help="also write every product found across the crawl, de-duplicated, "
+                         "to FILE (.csv or .json); implies --products")
     ex.add_argument("--no-default", action="store_true",
                     help="only output custom fields, skip generic page extraction")
 
@@ -120,6 +125,7 @@ def main(argv: list[str] | None = None) -> int:
         respect_robots=not args.ignore_robots,
         rules=rules or None,
         include_default=not args.no_default,
+        products=args.products or bool(args.products_file),
     )
 
     headers = _kv_pairs(args.header, ":")
@@ -136,8 +142,21 @@ def main(argv: list[str] | None = None) -> int:
         verify_ssl=not args.insecure,
     ) as fetcher:
         crawler = Crawler(fetcher, config)
+        catalog: dict[tuple, dict] = {}
+
+        def collect(records):
+            for rec in records:
+                for prod in rec.get("products") or []:
+                    key = (prod["name"].lower(), prod["price"], prod["image"])
+                    if key in catalog:
+                        if rec["url"] not in catalog[key]["found_on"]:
+                            catalog[key]["found_on"].append(rec["url"])
+                    else:
+                        catalog[key] = {**prod, "found_on": [rec["url"]]}
+                yield rec
+
         try:
-            n = write(crawler.crawl(urls), args.format, args.output)
+            n = write(collect(crawler.crawl(urls)), args.format, args.output)
         except KeyboardInterrupt:
             print("\ninterrupted", file=sys.stderr)
             return 130
@@ -146,6 +165,14 @@ def main(argv: list[str] | None = None) -> int:
             return 1
     if args.output:
         print(f"wrote {n} record(s) to {args.output}", file=sys.stderr)
+    if args.products_file:
+        fmt = "csv" if args.products_file.lower().endswith(".csv") else "json"
+        rows = list(catalog.values())
+        if fmt == "csv":
+            for r in rows:
+                r["found_on"] = " ".join(r["found_on"])
+        write(rows, fmt, args.products_file)
+        print(f"wrote {len(rows)} unique product(s) to {args.products_file}", file=sys.stderr)
     return 0
 
 

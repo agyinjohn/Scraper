@@ -37,6 +37,21 @@ scraper https://shop.example.com --config rules.example.json -f csv -o products.
 
 `python -m scraper ...` works too, without installing.
 
+## Automatic product detection
+
+`--products` finds product cards on any shop page without writing selectors. It
+looks for the smallest block around a price that also has a photo and a name,
+and returns name, price, sale/old price, link, image and star rating. Header and
+menu widgets (mini-carts), icon feature boxes and badges like "Hot"/"-25%" are
+ignored.
+
+```bash
+# crawl a whole shop and save one de-duplicated product catalog
+scraper https://shop.example.com -d 10 -n 500 --products-file products.csv -o pages.json
+```
+
+Each catalog row includes `found_on`, the pages where that product appeared.
+
 ## Extraction rules
 
 On the command line, `-s` takes `name=selector[@attr]`:

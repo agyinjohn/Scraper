@@ -34,6 +34,7 @@ class CrawlConfig:
     respect_robots: bool = True
     rules: Optional[dict[str, Rule]] = None
     include_default: bool = True
+    products: bool = False  # auto-detect product cards on every page
 
 
 def normalize_url(url: str) -> str:
@@ -131,7 +132,10 @@ class Crawler:
                 continue
 
             record.update(
-                extract(res.text, res.url, self.config.rules, self.config.include_default)
+                extract(
+                    res.text, res.url, self.config.rules,
+                    self.config.include_default, self.config.products,
+                )
             )
             yield record
 
