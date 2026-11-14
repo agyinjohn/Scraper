@@ -35,6 +35,7 @@ class CrawlConfig:
     rules: Optional[dict[str, Rule]] = None
     include_default: bool = True
     products: bool = False  # auto-detect product cards on every page
+    full: bool = False  # all text incl. header/footer, plus forms
 
 
 def normalize_url(url: str) -> str:
@@ -49,7 +50,8 @@ def _host(url: str) -> str:
 
 
 class Crawler:
-    def __init__(self, fetcher: Fetcher, config: CrawlConfig):
+    def __init__(self, fetcher: Fetcher, config: CrawlConfig, on_page=None):
+        self.on_page = on_page  # optional callback(url, html, record)
         self.fetcher = fetcher
         self.config = config
         self._robots: dict[str, Optional[RobotFileParser]] = {}
@@ -134,9 +136,11 @@ class Crawler:
             record.update(
                 extract(
                     res.text, res.url, self.config.rules,
-                    self.config.include_default, self.config.products,
+                    self.config.include_default, self.config.products, self.config.full,
                 )
             )
+            if self.on_page is not None:
+                self.on_page(res.url, res.text, record)
             yield record
 
             if depth < self.config.max_depth:

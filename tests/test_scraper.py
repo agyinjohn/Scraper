@@ -164,3 +164,35 @@ def test_auto_product_detection():
         {"name": "Desk Lamp", "price": "€45", "old_price": None,
          "url": "https://shop.test/p/b", "image": "https://shop.test/b.jpg", "rating": None},
     ]
+
+
+def test_media_contacts_forms():
+    html = """<html><body><header><a href="tel:+1 555 010 9999">call</a></header>
+    <section data-background="img/bg.jpg" style="background-image:url('img/hero.png')"></section>
+    <a href="https://www.youtube.com/watch?v=abc">play</a><iframe src="https://maps.example/embed"></iframe>
+    <footer>Mail us: hello@shop.test</footer>
+    <form action="/subscribe" method="post"><label for="e">Email</label>
+      <input id="e" name="email" type="email" required><select name="c"><option>A</option><option>B</option></select>
+      <button>Go</button></form></body></html>"""
+    d = extract(html, "https://shop.test/", full=True)
+    assert d["background_images"] == ["https://shop.test/img/bg.jpg", "https://shop.test/img/hero.png"]
+    assert d["videos"] == ["https://www.youtube.com/watch?v=abc"]
+    assert d["embeds"] == ["https://maps.example/embed"]
+    assert d["emails"] == ["hello@shop.test"] and d["phones"] == ["+1 555 010 9999"]
+    assert "Mail us: hello@shop.test" in d["full_text"] and "Mail us" not in d["text"]
+    (form,) = d["forms"]
+    assert form["action"] == "https://shop.test/subscribe" and form["method"] == "POST"
+    assert form["fields"][0] == {"tag": "input", "type": "email", "name": "email", "label": "Email", "required": True}
+    assert form["fields"][1]["options"] == ["A", "B"]
+
+
+def test_download(site, tmp_path):
+    rc = main([site + "/index.html", "--download", str(tmp_path), "--delay", "0", "-o", str(tmp_path / "o.json")])
+    assert rc == 0
+    files = {p.name for p in tmp_path.rglob("*") if p.is_file()}
+    assert "index.html" in files
+
+
+def test_phone_noise_rejected():
+    html = "<p>+670 413 90 762</p><p>7398 Main St</p><p>(22) (15) (03)</p><p>Order 2024-2025</p><p>Call (020) 555-0199</p>"
+    assert extract(html, "https://x.test/")["phones"] == ["+670 413 90 762", "(020) 555-0199"]

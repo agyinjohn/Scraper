@@ -40,7 +40,9 @@ def _clean(text: str) -> str:
 
 
 # ----------------------------------------------------------------- defaults
-def extract_default(soup: BeautifulSoup, base_url: str) -> dict:
+def extract_default(soup: BeautifulSoup, base_url: str, full: bool = False) -> dict:
+    """Generic page data. ``full=True`` adds all visible text (header, menus,
+    footer, popups included) and every form with its fields."""
     def meta(name: str) -> Optional[str]:
         tag = soup.find("meta", attrs={"name": name}) or soup.find(
             "meta", attrs={"property": name}
@@ -86,7 +88,7 @@ def extract_default(soup: BeautifulSoup, base_url: str) -> dict:
         except (json.JSONDecodeError, TypeError):
             pass
 
-    return {
+    data = {
         "title": title,
         "description": meta("description") or meta("og:description"),
         "language": (soup.html.get("lang") if soup.html else None),
@@ -102,7 +104,117 @@ def extract_default(soup: BeautifulSoup, base_url: str) -> dict:
         "images": images,
         "tables": tables,
         "json_ld": json_ld,
+        **extract_media(soup, base_url),
+        **extract_contacts(soup),
     }
+    if full:
+        data["full_text"] = all_text(soup)
+        data["forms"] = extract_forms(soup, base_url)
+    return data
+
+
+_BG_RE = re.compile(r"url\(\s*['\"]?([^'\")]+)['\"]?\s*\)")
+_VIDEO_HOSTS = re.compile(r"youtube\.com|youtu\.be|vimeo\.com|wistia|dailymotion", re.I)
+EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+PHONE_RE = re.compile(r"(?<![\w])(?:\+\d{1,3}[ .-]?)?(?:\(\d{1,4}\)[ .-]?)?\d[\d .-]{5,}\d(?![\w])")
+
+
+def extract_media(soup: BeautifulSoup, base_url: str) -> dict:
+    """Background images (inline styles / data-background), videos, audio and embeds."""
+    bgs: list[str] = []
+    for el in soup.find_all(True):
+        for attr in ("data-background", "data-bg", "data-bg-src", "data-background-image"):
+            if el.get(attr):
+                bgs.append(el[attr])
+        style = el.get("style")
+        if style and "url(" in style:
+            bgs.extend(_BG_RE.findall(style))
+    for st in soup.find_all("style"):
+        bgs.extend(_BG_RE.findall(st.get_text()))
+    bgs = [u for u in bgs if not u.startswith("data:")]
+
+    videos: list[str] = []
+    for v in soup.find_all(["video", "audio", "source"]):
+        if v.get("src"):
+            videos.append(v["src"])
+    for a in soup.find_all("a", href=True):
+        if _VIDEO_HOSTS.search(a["href"]) or re.search(r"\.(mp4|webm|mov|mp3)$", a["href"], re.I):
+            videos.append(a["href"])
+    embeds = [i.get("src") for i in soup.find_all(["iframe", "embed"]) if i.get("src")]
+
+    def uniq(urls):
+        out = []
+        for u in urls:
+            u = urljoin(base_url, u.strip())
+            if u not in out:
+                out.append(u)
+        return out
+
+    return {"background_images": uniq(bgs), "videos": uniq(videos), "embeds": uniq(embeds)}
+
+
+def extract_contacts(soup: BeautifulSoup) -> dict:
+    emails, phones = [], []
+    for a in soup.find_all("a", href=True):
+        h = a["href"]
+        if h.lower().startswith("mailto:"):
+            emails.append(h[7:].split("?")[0])
+        elif h.lower().startswith("tel:"):
+            phones.append(h[4:])
+    text = all_text(soup)
+    emails += EMAIL_RE.findall(text)
+    for m in PHONE_RE.findall(text):
+        digits = re.sub(r"\D", "", m)
+        if (m.startswith("+") or "(" in m) and 8 <= len(digits) <= 15 and not re.fullmatch(r"(19|20)\d{2}\D*(19|20)\d{2}", m.strip()):
+            phones.append(_clean(m))
+    norm = lambda p: re.sub(r"\D", "", p)
+    seen_p, phones_u = set(), []
+    for p in phones:
+        if norm(p) not in seen_p:
+            seen_p.add(norm(p))
+            phones_u.append(p.strip())
+    return {"emails": list(dict.fromkeys(e.strip().lower() for e in emails)), "phones": phones_u}
+
+
+def extract_forms(soup: BeautifulSoup, base_url: str) -> list[dict]:
+    forms = []
+    for f in soup.find_all("form"):
+        fields = []
+        for el in f.find_all(["input", "select", "textarea", "button"]):
+            typ = el.get("type", el.name) if el.name == "input" else el.name
+            if typ in ("hidden",) and not el.get("name"):
+                continue
+            label = None
+            if el.get("id"):
+                lab = soup.find("label", attrs={"for": el["id"]})
+                label = _clean(lab.get_text()) if lab else None
+            if not label and el.find_parent("label"):
+                label = _clean(el.find_parent("label").get_text())
+            field = {
+                "tag": el.name, "type": typ, "name": el.get("name"),
+                "label": label, "placeholder": el.get("placeholder"),
+                "value": el.get("value") if el.name != "textarea" else _clean(el.get_text()) or None,
+                "required": el.has_attr("required"),
+            }
+            if el.name == "select":
+                field["options"] = [_clean(o.get_text()) for o in el.find_all("option")]
+            if el.name == "button":
+                field["text"] = _clean(el.get_text())
+            fields.append({k: v for k, v in field.items() if v not in (None, False, "")})
+        forms.append({
+            "id": f.get("id"), "action": urljoin(base_url, f.get("action") or ""),
+            "method": (f.get("method") or "GET").upper(), "fields": fields,
+        })
+    return forms
+
+
+def all_text(soup: BeautifulSoup) -> str:
+    """Every visible line of text on the page, chrome and popups included."""
+    soup = make_soup(str(soup))
+    for tag in soup(["script", "style", "noscript", "template", "svg", "iframe", "head"]):
+        tag.decompose()
+    lines = [_clean(line) for line in soup.get_text("\n").splitlines()]
+    return "\n".join(line for line in lines if line)
 
 
 def _canonical(soup: BeautifulSoup, base_url: str) -> Optional[str]:
@@ -210,11 +322,12 @@ def extract(
     rules: Optional[dict[str, Rule]] = None,
     include_default: bool = True,
     products: bool = False,
+    full: bool = False,
 ) -> dict:
     soup = make_soup(html)
     data: dict[str, Any] = {}
     if include_default:
-        data.update(extract_default(soup, base_url))
+        data.update(extract_default(soup, base_url, full))
     if products:
         data["products"] = extract_products(soup, base_url)
     if rules:

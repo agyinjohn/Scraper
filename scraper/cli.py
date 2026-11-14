@@ -6,6 +6,7 @@ import argparse
 import json
 import logging
 import sys
+from urllib.parse import urlparse
 
 from . import __version__
 from .crawler import CrawlConfig, Crawler
@@ -51,6 +52,10 @@ def build_parser() -> argparse.ArgumentParser:
     ex.add_argument("--products-file", metavar="FILE",
                     help="also write every product found across the crawl, de-duplicated, "
                          "to FILE (.csv or .json); implies --products")
+    ex.add_argument("--full", action="store_true",
+                    help="capture everything: all text (header/menus/footer/popups) and form fields")
+    ex.add_argument("--download", metavar="DIR",
+                    help="save each page's HTML and all its images/background images/video files into DIR")
     ex.add_argument("--no-default", action="store_true",
                     help="only output custom fields, skip generic page extraction")
 
@@ -126,6 +131,7 @@ def main(argv: list[str] | None = None) -> int:
         rules=rules or None,
         include_default=not args.no_default,
         products=args.products or bool(args.products_file),
+        full=args.full,
     )
 
     headers = _kv_pairs(args.header, ":")
@@ -141,7 +147,19 @@ def main(argv: list[str] | None = None) -> int:
         wait_for=args.wait_for,
         verify_ssl=not args.insecure,
     ) as fetcher:
-        crawler = Crawler(fetcher, config)
+        downloader = None
+        on_page = None
+        if args.download:
+            from .downloader import Downloader
+            hosts = None if args.any_domain else {
+                urlparse(u).netloc.lower().removeprefix("www.") for u in urls}
+            downloader = Downloader(fetcher, args.download, hosts)
+
+            def on_page(url, html, record):
+                record["saved_as"] = downloader.save_page(url, html)
+                downloader.download(downloader.media_urls(record))
+
+        crawler = Crawler(fetcher, config, on_page=on_page)
         catalog: dict[tuple, dict] = {}
 
         def collect(records):
@@ -165,6 +183,11 @@ def main(argv: list[str] | None = None) -> int:
             return 1
     if args.output:
         print(f"wrote {n} record(s) to {args.output}", file=sys.stderr)
+    if downloader is not None:
+        print(f"saved pages and {downloader.saved} media file(s) to {args.download}; "
+              f"{len(downloader.failed)} failed", file=sys.stderr)
+        for f in downloader.failed[:20]:
+            print(f"  failed: {f}", file=sys.stderr)
     if args.products_file:
         fmt = "csv" if args.products_file.lower().endswith(".csv") else "json"
         rows = list(catalog.values())

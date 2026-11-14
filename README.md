@@ -37,6 +37,22 @@ scraper https://shop.example.com --config rules.example.json -f csv -o products.
 
 `python -m scraper ...` works too, without installing.
 
+## Capturing everything on a site
+
+Every page record always includes `background_images` (CSS/`data-background`),
+`videos` (YouTube/Vimeo links and video files), `embeds` (iframes such as maps),
+`emails` and `phones`.
+
+* `--full` adds `full_text` (every visible line, including header, menus,
+  footer and popups; `text` stays the main content only) and `forms` (each form's
+  action, method and fields with names, labels, placeholders and options).
+* `--download DIR` saves every page's HTML plus all of its images, background
+  images and video files into `DIR/<host>/<path>`, mirroring the site layout.
+
+```bash
+scraper https://example.com -d 10 -n 500 --full --download mirror/ -o site.json
+```
+
 ## Automatic product detection
 
 `--products` finds product cards on any shop page without writing selectors. It
@@ -108,6 +124,8 @@ scraper https://ex-coders.com/html/ecomas/index.html -d 1 --include 'product-det
 | `--render`, `--wait-for CSS` | use headless Chromium via Playwright |
 | `-H 'Name: value'`, `--cookie k=v` | extra headers / cookies (e.g. for logged-in pages) |
 | `--proxy URL`, `--user-agent UA`, `--timeout`, `--retries`, `--insecure` | network tuning |
+| `-p/--products`, `--products-file FILE` | auto-detect products per page / write a site-wide catalog |
+| `--full`, `--download DIR` | capture all text and forms / save pages and media |
 | `-f json\|jsonl\|csv`, `-o FILE` | output format and destination (default JSON to stdout) |
 | `-i FILE` | read URLs from a file, one per line |
 | `-v` / `-vv` | progress / debug logging |
