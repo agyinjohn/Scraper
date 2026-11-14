@@ -1,0 +1,14 @@
+{
+  "products": {
+    "selector": ".product-card-item, .product-card-item-2",
+    "all": true,
+    "fields": {
+      "name": ".product-content h4 a",
+      "subtitle": ".product-content p",
+      "price": { "selector": ".product-content > span, .product-content .doller li", "regex": "\\$[\\d,.]+" },
+      "old_price": ".product-content del",
+      "url": ".product-content h4 a@href",
+      "image": ".product-image img@src"
+    }
+  }
+}

@@ -59,7 +59,12 @@ For nested records, use a JSON config (see `rules.example.json`):
 }
 ```
 
-Custom fields appear under the `data` key of each record.
+Add `"regex"` to a rule to keep only part of the value, e.g.
+`{"selector": ".price", "regex": "\\$[\\d.,]+"}` (a capture group, if present, is returned).
+
+Custom fields appear under the `data` key of each record. `examples/ecomas.json`
+is a real-world example that pulls product cards (name, price, sale price,
+image, URL) from an e-commerce template page.
 
 ## Options
 

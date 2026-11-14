@@ -21,7 +21,8 @@ from bs4 import BeautifulSoup, Tag
 URL_ATTRS = {"href", "src", "action", "data-src", "poster"}
 
 # A rule is either a selector string ("css", "css@attr") or a dict:
-#   {"selector": "...", "attr": "...", "all": bool, "fields": {name: rule}}
+#   {"selector": "...", "attr": "...", "all": bool, "regex": "...", "fields": {name: rule}}
+# "regex" keeps only the first match (or its first capture group) of the value.
 Rule = Union[str, dict]
 
 
@@ -179,10 +180,16 @@ def apply_rule(scope: Union[BeautifulSoup, Tag], rule: Rule, base_url: str) -> A
     else:
         elements = [scope]
 
+    pattern = re.compile(r["regex"]) if r.get("regex") else None
+
     def one(el: Tag):
         if fields:
             return {k: apply_rule(el, sub, base_url) for k, sub in fields.items()}
-        return _value(el, r.get("attr"), base_url)
+        val = _value(el, r.get("attr"), base_url)
+        if pattern and val is not None:
+            m = pattern.search(val)
+            val = (m.group(1) if m.groups() else m.group(0)) if m else None
+        return val
 
     results = [one(el) for el in elements]
     if many:

@@ -127,3 +127,10 @@ def test_cli_csv(site, tmp_path):
     assert main([site + "/index.html", "-s", "h=h1", "-f", "csv", "-o", str(out), "--delay", "0"]) == 0
     text = out.read_text()
     assert "data.h" in text.splitlines()[0] and "Welcome" in text
+
+
+def test_regex_rule():
+    soup = make_soup("<li>$19.00 <del>$27.00</del></li><b>SKU: 42</b>")
+    assert apply_rule(soup, {"selector": "li", "regex": r"\$[\d.]+"}, "") == "$19.00"
+    assert apply_rule(soup, {"selector": "b", "regex": r"SKU: (\d+)"}, "") == "42"
+    assert apply_rule(soup, {"selector": "b", "regex": r"zzz"}, "") is None
